@@ -209,7 +209,7 @@ from predict import PredictionEngine
 import json
 
 app = Flask(__name__)
-# working 
+# working  is odne 
 # ✅ COMPLETELY REMOVE ALL CORS HANDLING
 # No flask_cors import, no CORS configuration
 
