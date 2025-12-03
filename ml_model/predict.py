@@ -1,3 +1,4 @@
+# # predict.py
 # import pandas as pd
 # import numpy as np
 # import joblib
@@ -12,6 +13,7 @@
 #             self.preprocessor = self.model_data['preprocessor']
 #             self.data = self.preprocessor.data
 #             print("✅ Prediction engine loaded successfully!")
+#             print(f"📊 Available columns in data: {list(self.data.columns)}")
 #         except Exception as e:
 #             print(f"❌ Error loading model: {e}")
 #             raise
@@ -47,21 +49,19 @@
 #             return bool(value)
 #         except (ValueError, TypeError):
 #             return default
-    
-#     def get_top_recommendations(self, student_data, top_k=10):
-#         """Get top program recommendations for a student"""
+
+#     def get_top_recommendations(self, student_data, top_k=12):
+#         """Get top program recommendations for a student with priority system"""
 #         print(f"🔍 Finding top {top_k} recommendations...")
         
 #         recommendations = []
         
 #         for _, program in self.data.iterrows():
-#             # Calculate match score
-#             score = self._calculate_match_score(program, student_data)
+#             # Calculate match score with priority weights
+#             score = self._calculate_priority_match_score(program, student_data)
             
-#             # Get available intakes - FIXED
+#             # Get available intakes
 #             available_intakes = []
-            
-#             # Use the preprocessed boolean values directly
 #             if self._safe_bool_conversion(program.get('intake_spring', False)):
 #                 available_intakes.append('Spring')
 #             if self._safe_bool_conversion(program.get('intake_summer', False)):
@@ -71,47 +71,93 @@
 #             if self._safe_bool_conversion(program.get('intake_winter', False)):
 #                 available_intakes.append('Winter')
             
-#             recommendations.append({
-#                 'program_id': program['program_id'],
-#                 'university_name': program['university_name'],
-#                 'program_name': program['program_name'],
-#                 'field_of_study': program['field_of_study'],
-#                 'specialization': program['specialization'],
-#                 'country': program['country'],
-#                 'city': program['city'],
-#                 'university_type': program['university_type'],
-#                 'world_ranking': self._safe_float_conversion(program['world_ranking']),
-#                 'tuition_fee_usd': self._safe_float_conversion(program['tuition_fee_usd']),
-#                 'course_duration_months': self._safe_float_conversion(program['course_duration_months']),
+#             # Get application deadline
+#             deadline = self._get_application_deadline(program, student_data.get('intake', 'fall'))
+            
+#             # Get course link safely
+#             course_link = program.get('course_link', program.get('website', program.get('university_website', '#')))
+            
+#             # Build recommendation with safe field access
+#             recommendation = {
+#                 'program_id': program.get('program_id', f"program_{_}"),
+#                 'university_name': program.get('university_name', 'Unknown University'),
+#                 'program_name': program.get('program_name', 'Unknown Program'),
+#                 'field_of_study': program.get('field_of_study', 'General'),
+#                 'specialization': program.get('specialization', 'General'),
+#                 'country': program.get('country', 'Unknown'),
+#                 'city': program.get('city', 'Unknown'),
+#                 'campus_location': program.get('campus_location', program.get('city', 'Unknown')),
+#                 'university_type': program.get('university_type', 'Public'),
+#                 'world_ranking': self._safe_float_conversion(program.get('world_ranking', 500)),
+#                 'tuition_fee_usd': self._safe_float_conversion(program.get('tuition_fee_usd', 25000)),
+#                 'application_fee': self._safe_float_conversion(program.get('application_fee', 0)),
+#                 'course_duration_months': self._safe_float_conversion(program.get('course_duration_months', 24)),
 #                 'job_placement_rate': self._safe_float_conversion(program.get('job_placement_rate_clean', program.get('job_placement_rate', 50))),
 #                 'available_intakes': available_intakes,
+#                 'application_deadline': deadline,
+#                 'scholarship_available': self._safe_bool_conversion(program.get('scholarship_available', True)),
+#                 'course_link': course_link,
+#                 'language_requirements': program.get('language_requirements', 'English'),
+#                 'ielts_required': self._safe_float_conversion(program.get('ielts_overall', 6.5)),
 #                 'score_percentage': int(score)
-#             })
+#             }
+            
+#             recommendations.append(recommendation)
         
 #         # Sort by score and return top programs
 #         top_programs = sorted(recommendations, key=lambda x: x['score_percentage'], reverse=True)[:top_k]
         
 #         print(f"✅ Found {len(top_programs)} recommendations")
 #         return top_programs
-    
-#     def _calculate_match_score(self, program, student_data):
-#         """Calculate overall match score (0-100)"""
+
+#     def _calculate_priority_match_score(self, program, student_data):
+#         """Calculate match score based on student priorities"""
+#         priority_weights = self._get_priority_weights(student_data)
+        
 #         score = 0
         
-#         # Academic match (25 points)
-#         score += self._calculate_academic_match(program, student_data) * 25
+#         # Academic match
+#         academic_score = self._calculate_academic_match(program, student_data)
+#         score += academic_score * priority_weights.get('academic', 0.25)
         
-#         # Budget match (20 points)
-#         score += self._calculate_budget_match(program, student_data) * 20
+#         # Budget match
+#         budget_score = self._calculate_budget_match(program, student_data)
+#         score += budget_score * priority_weights.get('budget', 0.25)
         
-#         # Preference match (35 points)
-#         score += self._calculate_preference_match(program, student_data) * 35
+#         # Location match
+#         location_score = self._calculate_location_match(program, student_data)
+#         score += location_score * priority_weights.get('location', 0.25)
         
-#         # English match (20 points)
-#         score += self._calculate_english_match(program, student_data) * 20
+#         # Course match
+#         course_score = self._calculate_course_match(program, student_data)
+#         score += course_score * priority_weights.get('course', 0.25)
         
-#         return min(score, 100)
-    
+#         return min(score * 100, 100)
+
+#     def _get_priority_weights(self, student_data):
+#         """Get weights based on student priorities"""
+#         priorities = {
+#             '1': student_data.get('priority_1', 'course'),
+#             '2': student_data.get('priority_2', 'budget'),
+#             '3': student_data.get('priority_3', 'location')
+#         }
+        
+#         weights = {
+#             'academic': 0.15,
+#             'budget': 0.15,
+#             'location': 0.15,
+#             'course': 0.15
+#         }
+        
+#         # Assign weights based on priority
+#         priority_weights = [0.40, 0.30, 0.20]  # 40%, 30%, 20% for 1st, 2nd, 3rd priorities
+        
+#         for i, (priority_key, priority_value) in enumerate(priorities.items()):
+#             if i < len(priority_weights):
+#                 weights[priority_value] = priority_weights[i]
+        
+#         return weights
+
 #     def _calculate_academic_match(self, program, student_data):
 #         """Calculate academic compatibility (0-1)"""
 #         try:
@@ -125,15 +171,15 @@
 #             if student_score >= min_required:
 #                 return 1.0
 #             elif student_score >= min_required * 0.9:
-#                 return 0.7
+#                 return 0.8
 #             elif student_score >= min_required * 0.8:
-#                 return 0.4
+#                 return 0.6
 #             else:
-#                 return 0.1
+#                 return 0.3
 #         except Exception as e:
 #             print(f"⚠️ Academic match error: {e}")
-#             return 0.1
-    
+#             return 0.3
+
 #     def _calculate_budget_match(self, program, student_data):
 #         """Calculate budget compatibility (0-1)"""
 #         try:
@@ -142,27 +188,64 @@
             
 #             if program_fee <= student_budget:
 #                 return 1.0
+#             elif program_fee <= student_budget * 1.1:
+#                 return 0.8
 #             elif program_fee <= student_budget * 1.2:
 #                 return 0.6
 #             else:
-#                 return 0.2
+#                 return 0.3
 #         except Exception as e:
 #             print(f"⚠️ Budget match error: {e}")
-#             return 0.2
-    
-#     def _calculate_preference_match(self, program, student_data):
-#         """Calculate preference compatibility (0-1)"""
+#             return 0.3
+
+#     def _calculate_location_match(self, program, student_data):
+#         """Calculate location compatibility (0-1)"""
 #         try:
 #             score = 0
             
-#             # Field of study match (12 points)
+#             # Country match
+#             program_country = str(program.get('country', '')).strip().lower()
+#             student_country = str(student_data.get('country', '')).strip().lower()
+            
+#             if student_country and program_country == student_country:
+#                 score += 0.6
+#             elif not student_country:
+#                 score += 0.3  # No preference = partial match
+                
+#             # City match
+#             program_city = str(program.get('city', '')).strip().lower()
+#             student_city = str(student_data.get('city', '')).strip().lower()
+            
+#             if student_city and program_city == student_city:
+#                 score += 0.4
+                
+#             return min(score, 1.0)
+#         except Exception as e:
+#             print(f"⚠️ Location match error: {e}")
+#             return 0.3
+
+#     def _calculate_course_match(self, program, student_data):
+#         """Calculate course compatibility (0-1)"""
+#         try:
+#             score = 0
+            
+#             # Field of study match
 #             program_field = str(program.get('field_of_study', '')).strip().lower()
 #             student_field = str(student_data.get('field_of_study', '')).strip().lower()
             
 #             if program_field == student_field:
-#                 score += 0.35
+#                 score += 0.4
             
-#             # Duration match (9 points)
+#             # Specialization match
+#             program_specialization = str(program.get('specialization', '')).strip().lower()
+#             student_specialization = str(student_data.get('specialization', '')).strip().lower()
+            
+#             if student_specialization and program_specialization == student_specialization:
+#                 score += 0.3
+#             elif not student_specialization:
+#                 score += 0.15  # No specialization preference
+            
+#             # Duration match
 #             preferred_duration = student_data.get('course_duration', '2 years')
 #             program_duration = self._safe_float_conversion(program.get('course_duration_months', 24))
             
@@ -175,31 +258,9 @@
 #             if preferred_duration in duration_match:
 #                 min_dur, max_dur = duration_match[preferred_duration]
 #                 if min_dur <= program_duration <= max_dur:
-#                     score += 0.25
+#                     score += 0.2
             
-#             # Location match (6 points)
-#             program_country = str(program.get('country', '')).strip().lower()
-#             student_country = str(student_data.get('country', '')).strip().lower()
-            
-#             if student_country and program_country == student_country:
-#                 score += 0.15
-                
-#             program_city = str(program.get('city', '')).strip().lower()
-#             student_city = str(student_data.get('city', '')).strip().lower()
-            
-#             if student_city and program_city == student_city:
-#                 score += 0.08
-                
-#             # University Type Match (3 points)
-#             program_type = str(program.get('university_type', '')).strip().lower()
-#             student_type = str(student_data.get('university_type', '')).strip().lower()
-            
-#             if student_type and program_type == student_type:
-#                 score += 0.1
-#             elif student_type == 'both':
-#                 score += 0.05
-                
-#             # Intake Match (5 points)
+#             # Intake match
 #             student_intake = student_data.get('intake', '').lower()
 #             if student_intake:
 #                 program_intakes = []
@@ -213,16 +274,29 @@
 #                     program_intakes.append('winter')
                 
 #                 if student_intake in program_intakes:
-#                     score += 0.15
+#                     score += 0.1
 #                 elif student_intake == 'any':
 #                     if program_intakes:
-#                         score += 0.08
+#                         score += 0.05
                 
 #             return min(score, 1.0)
 #         except Exception as e:
-#             print(f"⚠️ Preference match error: {e}")
+#             print(f"⚠️ Course match error: {e}")
 #             return 0.3
-    
+
+#     def _get_application_deadline(self, program, intake):
+#         """Get application deadline based on intake"""
+#         # This would typically come from your database
+#         # For now, using a calculated deadline
+#         intake_deadlines = {
+#             'spring': 'December 15',
+#             'summer': 'March 15', 
+#             'fall': 'July 15',
+#             'winter': 'October 15'
+#         }
+        
+#         return program.get('application_deadline', intake_deadlines.get(intake, 'Varies'))
+
 #     def _calculate_english_match(self, program, student_data):
 #         """Calculate English test compatibility (0-1)"""
 #         try:
@@ -230,7 +304,7 @@
             
 #             if english_test == 'none':
 #                 moi_accepted = str(program.get('moi_accepted', 'No')).strip().lower()
-#                 return 1.0 if moi_accepted == 'yes' else 0.3
+#                 return 1.0 if moi_accepted == 'yes' else 0.5
 #             else:
 #                 student_score = self._safe_float_conversion(student_data.get('english_score', 0))
 #                 test_requirements = {
@@ -241,7 +315,12 @@
 #                 }
                 
 #                 required_score = test_requirements.get(english_test, 6.5)
-#                 return 1.0 if student_score >= required_score else 0.5
+#                 if student_score >= required_score:
+#                     return 1.0
+#                 elif student_score >= required_score * 0.9:
+#                     return 0.7
+#                 else:
+#                     return 0.4
 #         except Exception as e:
 #             print(f"⚠️ English match error: {e}")
 #             return 0.5
@@ -260,7 +339,10 @@
 #         'course_duration': '2 years',
 #         'country': 'Germany',
 #         'university_type': 'public',
-#         'intake': 'fall'
+#         'intake': 'fall',
+#         'priority_1': 'course',
+#         'priority_2': 'budget', 
+#         'priority_3': 'location'
 #     }
     
 #     try:
@@ -276,8 +358,6 @@
 #     except Exception as e:
 #         print(f"❌ Error: {e}")
 
-
-# predict.py
 import pandas as pd
 import numpy as np
 import joblib
@@ -286,13 +366,20 @@ from data_preprocessor import DataPreprocessor
 class PredictionEngine:
     def __init__(self, model_path='university_recommender_model.joblib'):
         try:
+            print("🔧 Loading prediction engine...")
             self.model_data = joblib.load(model_path)
             self.model = self.model_data['model']
             self.feature_columns = self.model_data['feature_columns']
             self.preprocessor = self.model_data['preprocessor']
             self.data = self.preprocessor.data
+            
+            # Create a reference to original data for recommendations
+            self.programs_data = self.data.copy()
+            
             print("✅ Prediction engine loaded successfully!")
-            print(f"📊 Available columns in data: {list(self.data.columns)}")
+            print(f"📊 Programs in database: {len(self.data)}")
+            print(f"📊 Available features: {len(self.feature_columns)}")
+            
         except Exception as e:
             print(f"❌ Error loading model: {e}")
             raise
@@ -300,7 +387,7 @@ class PredictionEngine:
     def _safe_float_conversion(self, value, default=0.0):
         """Safely convert any value to float"""
         try:
-            if pd.isna(value) or value == 'N/A' or value == '':
+            if pd.isna(value) or value in ['N/A', 'nan', 'null', '', 'None']:
                 return default
             return float(value)
         except (ValueError, TypeError):
@@ -309,7 +396,7 @@ class PredictionEngine:
     def _safe_bool_conversion(self, value, default=False):
         """Safely convert any value to boolean"""
         try:
-            if pd.isna(value) or value == 'N/A' or value == '' or value is None:
+            if pd.isna(value) or value in ['N/A', 'nan', 'null', '', 'None']:
                 return default
             
             if isinstance(value, (bool, np.bool_)):
@@ -330,33 +417,57 @@ class PredictionEngine:
             return default
 
     def get_top_recommendations(self, student_data, top_k=12):
-        """Get top program recommendations for a student with priority system"""
-        print(f"🔍 Finding top {top_k} recommendations...")
+        """Get top program recommendations for a student"""
+        print(f"\n🔍 Getting recommendations for student...")
+        print(f"Student preferences: {student_data}")
         
         recommendations = []
         
-        for _, program in self.data.iterrows():
-            # Calculate match score with priority weights
-            score = self._calculate_priority_match_score(program, student_data)
+        # Filter programs based on basic criteria first
+        filtered_programs = self.data.copy()
+        
+        # Field of study filter
+        if 'field_of_study' in student_data and student_data['field_of_study']:
+            field = student_data['field_of_study'].strip().lower()
+            filtered_programs = filtered_programs[
+                filtered_programs['field_of_study'].astype(str).str.lower().str.contains(field, na=False)
+            ]
+        
+        # University type filter
+        if 'university_type' in student_data and student_data['university_type'] not in ['both', '']:
+            uni_type = student_data['university_type'].strip().lower()
+            if uni_type in ['public', 'private']:
+                filtered_programs = filtered_programs[
+                    filtered_programs['university_type'].astype(str).str.lower() == uni_type
+                ]
+        
+        # Intake filter
+        if 'intake' in student_data and student_data['intake'] not in ['any', '']:
+            intake = student_data['intake'].strip().lower()
+            intake_col = f'intake_{intake}'
+            if intake_col in filtered_programs.columns:
+                filtered_programs = filtered_programs[filtered_programs[intake_col] == True]
+        
+        print(f"📊 Programs after filtering: {len(filtered_programs)}")
+        
+        if len(filtered_programs) == 0:
+            print("⚠️ No programs match the filters, using all programs")
+            filtered_programs = self.data
+        
+        # Calculate match scores for filtered programs
+        for _, program in filtered_programs.iterrows():
+            score = self._calculate_comprehensive_match_score(program, student_data)
             
             # Get available intakes
             available_intakes = []
-            if self._safe_bool_conversion(program.get('intake_spring', False)):
-                available_intakes.append('Spring')
-            if self._safe_bool_conversion(program.get('intake_summer', False)):
-                available_intakes.append('Summer')
-            if self._safe_bool_conversion(program.get('intake_fall', False)):
-                available_intakes.append('Fall')
-            if self._safe_bool_conversion(program.get('intake_winter', False)):
-                available_intakes.append('Winter')
+            for intake in ['spring', 'summer', 'fall', 'winter']:
+                if self._safe_bool_conversion(program.get(f'intake_{intake}', False)):
+                    available_intakes.append(intake.capitalize())
             
-            # Get application deadline
-            deadline = self._get_application_deadline(program, student_data.get('intake', 'fall'))
+            # Get deadlines
+            deadline = self._get_nearest_deadline(program)
             
-            # Get course link safely
-            course_link = program.get('course_link', program.get('website', program.get('university_website', '#')))
-            
-            # Build recommendation with safe field access
+            # Build recommendation
             recommendation = {
                 'program_id': program.get('program_id', f"program_{_}"),
                 'university_name': program.get('university_name', 'Unknown University'),
@@ -365,105 +476,111 @@ class PredictionEngine:
                 'specialization': program.get('specialization', 'General'),
                 'country': program.get('country', 'Unknown'),
                 'city': program.get('city', 'Unknown'),
-                'campus_location': program.get('campus_location', program.get('city', 'Unknown')),
+                'campus_location': program.get('city', 'Unknown'),
                 'university_type': program.get('university_type', 'Public'),
-                'world_ranking': self._safe_float_conversion(program.get('world_ranking', 500)),
-                'tuition_fee_usd': self._safe_float_conversion(program.get('tuition_fee_usd', 25000)),
-                'application_fee': self._safe_float_conversion(program.get('application_fee', 0)),
-                'course_duration_months': self._safe_float_conversion(program.get('course_duration_months', 24)),
-                'job_placement_rate': self._safe_float_conversion(program.get('job_placement_rate_clean', program.get('job_placement_rate', 50))),
+                'world_ranking': int(self._safe_float_conversion(program.get('world_ranking', 500))),
+                'tuition_fee_usd': int(self._safe_float_conversion(program.get('tuition_fee_usd', 25000))),
+                'application_fee': int(self._safe_float_conversion(program.get('application_fee_eur', 0))),
+                'course_duration_months': int(self._safe_float_conversion(program.get('course_duration_months', 24))),
+                'job_placement_rate': int(self._safe_float_conversion(program.get('job_placement_rate', 50))),
+                'visa_success_rate': int(self._safe_float_conversion(program.get('visa_success_rate', 70))),
                 'available_intakes': available_intakes,
                 'application_deadline': deadline,
-                'scholarship_available': self._safe_bool_conversion(program.get('scholarship_available', True)),
-                'course_link': course_link,
-                'language_requirements': program.get('language_requirements', 'English'),
+                'scholarship_available': self._safe_bool_conversion(program.get('scholarships_available', True)),
+                'course_link': program.get('program_website', program.get('university_website', '#')),
+                'language_requirements': program.get('language_of_instruction', 'English'),
                 'ielts_required': self._safe_float_conversion(program.get('ielts_overall', 6.5)),
-                'score_percentage': int(score)
+                'toefl_required': self._safe_float_conversion(program.get('toefl_overall', 90)),
+                'score_percentage': min(int(score * 100), 100),
+                'commission_rate': self._safe_float_conversion(program.get('commission_rate', 10)),
+                'partner_name': program.get('partner_name', 'Direct'),
+                'program_highlights': program.get('program_highlights', 'N/A')
             }
             
             recommendations.append(recommendation)
         
-        # Sort by score and return top programs
-        top_programs = sorted(recommendations, key=lambda x: x['score_percentage'], reverse=True)[:top_k]
+        # Sort by score and get top K
+        recommendations.sort(key=lambda x: x['score_percentage'], reverse=True)
+        top_programs = recommendations[:top_k]
         
         print(f"✅ Found {len(top_programs)} recommendations")
         return top_programs
 
-    def _calculate_priority_match_score(self, program, student_data):
-        """Calculate match score based on student priorities"""
-        priority_weights = self._get_priority_weights(student_data)
+    def _calculate_comprehensive_match_score(self, program, student_data):
+        """Calculate match score with multiple factors"""
+        score = 0.0
+        factors = []
         
-        score = 0
-        
-        # Academic match
+        # 1. Academic match (30%)
         academic_score = self._calculate_academic_match(program, student_data)
-        score += academic_score * priority_weights.get('academic', 0.25)
+        score += academic_score * 0.3
+        factors.append(('Academic', academic_score))
         
-        # Budget match
+        # 2. Budget match (25%)
         budget_score = self._calculate_budget_match(program, student_data)
-        score += budget_score * priority_weights.get('budget', 0.25)
+        score += budget_score * 0.25
+        factors.append(('Budget', budget_score))
         
-        # Location match
+        # 3. Location match (20%)
         location_score = self._calculate_location_match(program, student_data)
-        score += location_score * priority_weights.get('location', 0.25)
+        score += location_score * 0.2
+        factors.append(('Location', location_score))
         
-        # Course match
+        # 4. Course/Program match (15%)
         course_score = self._calculate_course_match(program, student_data)
-        score += course_score * priority_weights.get('course', 0.25)
+        score += course_score * 0.15
+        factors.append(('Course', course_score))
         
-        return min(score * 100, 100)
-
-    def _get_priority_weights(self, student_data):
-        """Get weights based on student priorities"""
-        priorities = {
-            '1': student_data.get('priority_1', 'course'),
-            '2': student_data.get('priority_2', 'budget'),
-            '3': student_data.get('priority_3', 'location')
-        }
+        # 5. English requirements match (10%)
+        english_score = self._calculate_english_match(program, student_data)
+        score += english_score * 0.1
+        factors.append(('English', english_score))
         
-        weights = {
-            'academic': 0.15,
-            'budget': 0.15,
-            'location': 0.15,
-            'course': 0.15
-        }
+        # Debug output
+        if len(program.get('program_id', '')) == 8:  # Show for one program
+            print(f"Program {program.get('program_id')}:")
+            for factor, factor_score in factors:
+                print(f"  {factor}: {factor_score:.2f}")
+            print(f"  Total: {score:.2f}")
         
-        # Assign weights based on priority
-        priority_weights = [0.40, 0.30, 0.20]  # 40%, 30%, 20% for 1st, 2nd, 3rd priorities
-        
-        for i, (priority_key, priority_value) in enumerate(priorities.items()):
-            if i < len(priority_weights):
-                weights[priority_value] = priority_weights[i]
-        
-        return weights
+        return score
 
     def _calculate_academic_match(self, program, student_data):
         """Calculate academic compatibility (0-1)"""
         try:
             student_score = self._safe_float_conversion(student_data.get('academic_score', 0))
             
-            if student_data.get('score_type') == 'gpa':
-                min_required = self._safe_float_conversion(program.get('min_gpa_clean', program.get('min_gpa', 2.5)))
+            if student_data.get('score_type', 'gpa') == 'gpa':
+                min_required = self._safe_float_conversion(program.get('min_gpa', 2.5))
+                # GPA on 4.0 scale
+                if student_score >= min_required:
+                    return 1.0
+                elif student_score >= min_required * 0.9:
+                    return 0.8
+                elif student_score >= min_required * 0.8:
+                    return 0.6
+                else:
+                    return 0.3
             else:
-                min_required = self._safe_float_conversion(program.get('min_percentage_clean', program.get('min_percentage', 60)))
-            
-            if student_score >= min_required:
-                return 1.0
-            elif student_score >= min_required * 0.9:
-                return 0.8
-            elif student_score >= min_required * 0.8:
-                return 0.6
-            else:
-                return 0.3
+                min_required = self._safe_float_conversion(program.get('min_percentage', 60))
+                # Percentage
+                if student_score >= min_required:
+                    return 1.0
+                elif student_score >= min_required * 0.9:
+                    return 0.8
+                elif student_score >= min_required * 0.8:
+                    return 0.6
+                else:
+                    return 0.3
         except Exception as e:
             print(f"⚠️ Academic match error: {e}")
-            return 0.3
+            return 0.5
 
     def _calculate_budget_match(self, program, student_data):
         """Calculate budget compatibility (0-1)"""
         try:
             student_budget = self._safe_float_conversion(student_data.get('max_tuition_fee', 25000))
-            program_fee = self._safe_float_conversion(program.get('tuition_fee_usd', 0))
+            program_fee = self._safe_float_conversion(program.get('tuition_fee_usd', 25000))
             
             if program_fee <= student_budget:
                 return 1.0
@@ -471,121 +588,109 @@ class PredictionEngine:
                 return 0.8
             elif program_fee <= student_budget * 1.2:
                 return 0.6
+            elif program_fee <= student_budget * 1.5:
+                return 0.4
             else:
-                return 0.3
+                return 0.2
         except Exception as e:
             print(f"⚠️ Budget match error: {e}")
-            return 0.3
+            return 0.5
 
     def _calculate_location_match(self, program, student_data):
         """Calculate location compatibility (0-1)"""
         try:
-            score = 0
+            score = 0.0
             
-            # Country match
+            # Country match (70% of location score)
             program_country = str(program.get('country', '')).strip().lower()
             student_country = str(student_data.get('country', '')).strip().lower()
             
             if student_country and program_country == student_country:
-                score += 0.6
-            elif not student_country:
-                score += 0.3  # No preference = partial match
-                
-            # City match
+                score += 0.7
+            elif not student_country:  # No country preference
+                score += 0.35
+            else:
+                score += 0.1  # Different country
+            
+            # City match (30% of location score)
             program_city = str(program.get('city', '')).strip().lower()
             student_city = str(student_data.get('city', '')).strip().lower()
             
             if student_city and program_city == student_city:
-                score += 0.4
-                
+                score += 0.3
+            
             return min(score, 1.0)
         except Exception as e:
             print(f"⚠️ Location match error: {e}")
-            return 0.3
+            return 0.5
 
     def _calculate_course_match(self, program, student_data):
         """Calculate course compatibility (0-1)"""
         try:
-            score = 0
+            score = 0.0
             
-            # Field of study match
+            # Field of study match (40%)
             program_field = str(program.get('field_of_study', '')).strip().lower()
             student_field = str(student_data.get('field_of_study', '')).strip().lower()
             
-            if program_field == student_field:
+            if student_field and program_field and student_field in program_field:
                 score += 0.4
             
-            # Specialization match
-            program_specialization = str(program.get('specialization', '')).strip().lower()
-            student_specialization = str(student_data.get('specialization', '')).strip().lower()
+            # Specialization match (30%)
+            program_spec = str(program.get('specialization', '')).strip().lower()
+            student_spec = str(student_data.get('specialization', '')).strip().lower()
             
-            if student_specialization and program_specialization == student_specialization:
+            if student_spec and program_spec and student_spec in program_spec:
                 score += 0.3
-            elif not student_specialization:
-                score += 0.15  # No specialization preference
+            elif not student_spec:  # No specialization preference
+                score += 0.15
             
-            # Duration match
-            preferred_duration = student_data.get('course_duration', '2 years')
-            program_duration = self._safe_float_conversion(program.get('course_duration_months', 24))
+            # Duration match (30%)
+            if 'course_duration' in student_data and student_data['course_duration']:
+                try:
+                    preferred_duration = str(student_data['course_duration']).strip().lower()
+                    program_duration = self._safe_float_conversion(program.get('course_duration_months', 24))
+                    
+                    # Convert preferred duration to months
+                    duration_map = {
+                        '1 year': 12,
+                        '1.5 years': 18,
+                        '2 years': 24
+                    }
+                    
+                    if preferred_duration in duration_map:
+                        preferred_months = duration_map[preferred_duration]
+                        diff = abs(program_duration - preferred_months)
+                        
+                        if diff == 0:
+                            score += 0.3
+                        elif diff <= 6:
+                            score += 0.2
+                        elif diff <= 12:
+                            score += 0.1
+                except:
+                    pass
             
-            duration_match = {
-                '1 year': (0, 12),
-                '1.5 years': (13, 20),
-                '2 years': (21, 36)
-            }
-            
-            if preferred_duration in duration_match:
-                min_dur, max_dur = duration_match[preferred_duration]
-                if min_dur <= program_duration <= max_dur:
-                    score += 0.2
-            
-            # Intake match
-            student_intake = student_data.get('intake', '').lower()
-            if student_intake:
-                program_intakes = []
-                if self._safe_bool_conversion(program.get('intake_spring', False)):
-                    program_intakes.append('spring')
-                if self._safe_bool_conversion(program.get('intake_summer', False)):
-                    program_intakes.append('summer')
-                if self._safe_bool_conversion(program.get('intake_fall', False)):
-                    program_intakes.append('fall')
-                if self._safe_bool_conversion(program.get('intake_winter', False)):
-                    program_intakes.append('winter')
-                
-                if student_intake in program_intakes:
-                    score += 0.1
-                elif student_intake == 'any':
-                    if program_intakes:
-                        score += 0.05
-                
             return min(score, 1.0)
         except Exception as e:
             print(f"⚠️ Course match error: {e}")
-            return 0.3
-
-    def _get_application_deadline(self, program, intake):
-        """Get application deadline based on intake"""
-        # This would typically come from your database
-        # For now, using a calculated deadline
-        intake_deadlines = {
-            'spring': 'December 15',
-            'summer': 'March 15', 
-            'fall': 'July 15',
-            'winter': 'October 15'
-        }
-        
-        return program.get('application_deadline', intake_deadlines.get(intake, 'Varies'))
+            return 0.5
 
     def _calculate_english_match(self, program, student_data):
         """Calculate English test compatibility (0-1)"""
         try:
-            english_test = student_data.get('english_test', 'none')
+            english_test = student_data.get('english_test', 'none').lower()
             
             if english_test == 'none':
-                moi_accepted = str(program.get('moi_accepted', 'No')).strip().lower()
-                return 1.0 if moi_accepted == 'yes' else 0.5
+                # Check if medium of instruction accepted
+                if 'moi_accepted' in program and self._safe_bool_conversion(program['moi_accepted'], False):
+                    return 1.0
+                else:
+                    return 0.5
             else:
                 student_score = self._safe_float_conversion(student_data.get('english_score', 0))
+                
+                # Get required score based on test type
                 test_requirements = {
                     'ielts': self._safe_float_conversion(program.get('ielts_overall', 6.5)),
                     'toefl': self._safe_float_conversion(program.get('toefl_overall', 90)),
@@ -594,15 +699,36 @@ class PredictionEngine:
                 }
                 
                 required_score = test_requirements.get(english_test, 6.5)
+                
                 if student_score >= required_score:
                     return 1.0
                 elif student_score >= required_score * 0.9:
-                    return 0.7
+                    return 0.8
+                elif student_score >= required_score * 0.8:
+                    return 0.6
                 else:
                     return 0.4
         except Exception as e:
             print(f"⚠️ English match error: {e}")
             return 0.5
+
+    def _get_nearest_deadline(self, program):
+        """Get the nearest application deadline"""
+        try:
+            deadlines = {}
+            
+            for intake in ['spring', 'summer', 'fall', 'winter']:
+                deadline_col = f'{intake}_deadline'
+                if deadline_col in program and pd.notna(program[deadline_col]):
+                    deadlines[intake] = str(program[deadline_col])
+            
+            if deadlines:
+                # Return the first deadline
+                return next(iter(deadlines.values()))
+            else:
+                return 'Varies'
+        except:
+            return 'Varies'
 
 # Test the prediction engine
 if __name__ == "__main__":
@@ -617,10 +743,11 @@ if __name__ == "__main__":
         'max_tuition_fee': '30000',
         'course_duration': '2 years',
         'country': 'Germany',
-        'university_type': 'public',
+        'city': '',
+        'university_type': 'both',
         'intake': 'fall',
         'priority_1': 'course',
-        'priority_2': 'budget', 
+        'priority_2': 'budget',
         'priority_3': 'location'
     }
     
@@ -628,11 +755,18 @@ if __name__ == "__main__":
         engine = PredictionEngine()
         recommendations = engine.get_top_recommendations(test_student, 5)
         
-        print("\n🏆 Top Recommendations:")
+        print("\n" + "="*50)
+        print("🏆 TOP RECOMMENDATIONS")
+        print("="*50)
+        
         for i, rec in enumerate(recommendations):
-            print(f"{i+1}. {rec['program_name']} - {rec['university_name']}")
-            print(f"   Type: {rec['university_type']} | Intakes: {', '.join(rec['available_intakes'])}")
-            print(f"   Score: {rec['score_percentage']}% | Cost: ${rec['tuition_fee_usd']}")
-            print()
+            print(f"\n{i+1}. {rec['program_name']}")
+            print(f"   🎓 {rec['university_name']}")
+            print(f"   📍 {rec['city']}, {rec['country']} | 🏫 {rec['university_type']}")
+            print(f"   💰 ${rec['tuition_fee_usd']:,} | 📊 Score: {rec['score_percentage']}%")
+            print(f"   🏆 Rank: #{rec['world_ranking']} | 📅 Intakes: {', '.join(rec['available_intakes'])}")
+            
     except Exception as e:
         print(f"❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
